@@ -12,16 +12,14 @@ def plotPoints(coords, opacities = None):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
-
     if opacities == None:
         ax.scatter(xs, ys, zs, color='b', marker='o')
     else:
         opacities = opacities.reshape(-1)
         # t.set_printoptions(profile="full")
-        print(opacities)
+        # print(opacities)
         rgba_colors = np.column_stack((np.tile([0.5, 0, 1], (len(xs), 1)), opacities))
         ax.scatter(xs, ys, zs, c=rgba_colors, marker='o')
-
 
     ax.scatter([0], [0], [0], color='r', marker='o')
     
@@ -48,56 +46,66 @@ def getRays(H, W, focal, c2w):
     rayOrigins = c2w[:3, 3].unsqueeze(0).unsqueeze(0).expand(H, W, -1) # repeat the origin for every dir
 
     return rayOrigins, rayDirs
+# test ray generation
+if (False):
+    c2w = t.tensor([
+        [-0.687, -0.309, 0.658, 2.654],
+        [0.727, -0.291, 0.621, 2.506],
+        [0.000, 0.905, 0.424, 1.711],
+        [0.000, 0.000, 0.000, 1.000]
+    ])
+    rayOrigins, rayDirs = getRays(20, 20, 1, c2w)
+    
+    points = rayOrigins + rayDirs
+    points = t.cat([points.reshape(-1, 3), t.unsqueeze(c2w[:3, 3], 0)], dim=0)
+    plotPoints(points)
+
+def renderScene(sceneDensityFunc, W, H, focal, c2w, sampleCount=100, near=0, far=8):
+    """Renders the given scene function as a W*H image"""
+    rayOrigins, rayDirs = getRays(H, W, focal, c2w)
+
+    # choose sampling points for each ray. atm these are at regular intervals - TODO change to random
+    # there are (n+1) sample depths so that the nth sample has an interval distance for the integration approximation. this (n+1)th depth is not actually sampled.
+    sampleDepths = t.linspace(near, far, sampleCount + 1).unsqueeze(0).unsqueeze(0).expand(H, W, -1)
+    samplePoints = rayOrigins.unsqueeze(-2) + sampleDepths[..., :-1].unsqueeze(-1) * rayDirs.unsqueeze(-2)
+
+    # test sample point generation
+    if (False):
+        plotPoints(samplePoints, sampleScene(samplePoints).clamp(0.05, 1))
+
+    sceneDensities = sceneDensityFunc(samplePoints)
+    sampleDiffs = sampleDepths.diff()
+
+    # the probabilities that the ray has got to that point without hitting an object and stopping
+    accumulatedTransmittances = t.exp(-t.cumsum(sceneDensities*sampleDiffs, dim=-1))
+
+    # the colour of the scene at this point (=density*colour). ATM THERE IS NO COLOUR SO THIS IS JUST DENSITY
+    sceneColours = 1 - t.exp(-sceneDensities*sampleDiffs)
+
+    image = t.sum(accumulatedTransmittances*sceneColours, dim=-1)
+    return image
 
 
-
-def sampleScene(pos):
-    """Sample scene for a single input or batch of inputs. Returns the scene density (i.e. probability an object exists) for these points"""
-    pos[..., 1] *= 0.3
-    lengths = t.norm(pos, dim=-1)
-    density = 1 - t.pow(lengths, 5)
-    return density.clamp(0, 1)
-
-
+# camera to world coords transform
 c2w = t.tensor([
     [-0.687, -0.309, 0.658, 2.654],
     [0.727, -0.291, 0.621, 2.506],
     [0.000, 0.905, 0.424, 1.711],
     [0.000, 0.000, 0.000, 1.000]
 ])
-# c2w = t.tensor([
-#     [1, 0, 0, 3],
-#     [0, 1, 0, 1],
-#     [0, 0, 1, 0],
-#     [0, 0, 0, 1]
-# ], dtype=t.float)
-pos = c2w[:3, 3]
 
 
-# test ray generation
-if (False):
-    rayOrigins, rayDirs = getRays(20, 20, 1, c2w)
-    
-    points = rayOrigins + rayDirs
-    points = t.cat([points.reshape(-1, 3), t.unsqueeze(pos, 0)], dim=0)
-    plotPoints(points)
+def ellipsoidDensity(pos):
+    """= 1 - (|x, 0.3y, z|)^5"""
+    pos = pos.clone() # don't modify the input
+    pos[..., 1] *= 0.3
+    lengths = t.norm(pos, dim=-1)
+    density = 1 - t.pow(lengths, 5)
+    return density.clamp(0, 1)
 
+image = renderScene(ellipsoidDensity, 300, 300, 2, c2w, sampleCount=100)
 
-
-W, H = 10,10
-rayOrigins, rayDirs = getRays(H, W, 1, c2w)
-rayCount = rayOrigins.shape[0]
-
-sampleCount = 15
-near = 0
-far = 8
-
-# choose sampling points for each ray. atm these are at regular intervals - TODO change to random
-sampleDepths = t.linspace(near, far, sampleCount).unsqueeze(0).unsqueeze(0).expand(H, W, -1)
-samplePoints = rayOrigins.unsqueeze(-2) + sampleDepths.unsqueeze(-1) * rayDirs.unsqueeze(-2)
-
-# test sample point generation
-if (True):
-    plotPoints(samplePoints, sampleScene(samplePoints).clamp(0.04, 1))
-
-
+plt.axis('off')
+plt.imshow(image)
+plt.show(block = False)
+plt.show()
