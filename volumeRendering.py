@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 
-
 def plotPoints(coords, opacities = None):
     coords = coords.reshape(-1, 3)
     xs = coords[:, 0].numpy()
@@ -27,9 +26,17 @@ def plotPoints(coords, opacities = None):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
 
+
     plt.show()
 
+def getRays(uv, focal, c2w):
+    """
+    Generate a ray for each uv coordinate, given their corresponding camera parameters.
+    This is intended for rays from different cameras so that a model can be trained on random rays, as opposed to training on all the rays from one image.
 
+    focal is a focal length for each coordinate
+    c2w is a camara matrix  
+    """
 def getRays(H, W, focal, c2w):
     """
     Generate a ray for each pixel in a W*H image.
@@ -54,24 +61,25 @@ if (False):
         [0.000, 0.905, 0.424, 1.711],
         [0.000, 0.000, 0.000, 1.000]
     ])
-    rayOrigins, rayDirs = getRays(20, 20, 1, c2w)
+    rayOrigins, rayDirs = getRays(5, 5, 1, c2w)
     
     points = rayOrigins + rayDirs
     points = t.cat([points.reshape(-1, 3), t.unsqueeze(c2w[:3, 3], 0)], dim=0)
     plotPoints(points)
 
-def renderScene(sceneDensityFunc, W, H, focal, c2w, sampleCount=100, near=0, far=8):
-    """Renders the given scene function as a W*H image"""
-    rayOrigins, rayDirs = getRays(H, W, focal, c2w)
+def renderRays(rayOrigins, rayDirs, sceneDensityFunc, sampleCount=6, near=0, far=8):
+    """Renders the given batch of rays and returns their colours"""
 
     # choose sampling points for each ray. atm these are at regular intervals - TODO change to random
     # there are (n+1) sample depths so that the nth sample has an interval distance for the integration approximation. this (n+1)th depth is not actually sampled.
-    sampleDepths = t.linspace(near, far, sampleCount + 1).unsqueeze(0).unsqueeze(0).expand(H, W, -1)
+    sampleDepths = t.linspace(near, far, sampleCount + 1)
+    sampleDepths = sampleDepths.unsqueeze(0).unsqueeze(0).expand(rayOrigins.shape[:-1] + sampleDepths.shape)
+    
     samplePoints = rayOrigins.unsqueeze(-2) + sampleDepths[..., :-1].unsqueeze(-1) * rayDirs.unsqueeze(-2)
 
     # test sample point generation
     if (False):
-        plotPoints(samplePoints, sampleScene(samplePoints).clamp(0.05, 1))
+        plotPoints(samplePoints, ellipsoidDensity(samplePoints).clamp(0.05, 1))
 
     sceneDensities = sceneDensityFunc(samplePoints)
     sampleDiffs = sampleDepths.diff()
@@ -82,8 +90,14 @@ def renderScene(sceneDensityFunc, W, H, focal, c2w, sampleCount=100, near=0, far
     # the colour of the scene at this point (=density*colour). ATM THERE IS NO COLOUR SO THIS IS JUST DENSITY
     sceneColours = 1 - t.exp(-sceneDensities*sampleDiffs)
 
-    image = t.sum(accumulatedTransmittances*sceneColours, dim=-1)
-    return image
+    pixelColours = t.sum(accumulatedTransmittances*sceneColours, dim=-1)
+    return pixelColours
+
+
+def renderScene(sceneDensityFunc, W, H, focal, c2w, sampleCount=6, near=0, far=8):
+    """Renders the given scene function as a W*H image"""
+    rayOrigins, rayDirs = getRays(H, W, focal, c2w)
+    return renderRays(rayOrigins, rayDirs, sceneDensityFunc, sampleCount, near, far)
 
 
 # camera to world coords transform
