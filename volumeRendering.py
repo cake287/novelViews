@@ -76,16 +76,16 @@ def renderRays(rayOrigins, rayDirs, sceneDensityFunc, sampleCount=6, near=0, far
     # there are (n+1) sample depths so that the nth sample has an interval distance for the integration approximation. this (n+1)th depth is not actually sampled.
     sampleDepths = t.linspace(near, far, sampleCount + 1)
     sampleDepths = sampleDepths.expand(rayOrigins.shape[:-1] + sampleDepths.shape)
-    sampleDepthsRegular = sampleDepths.clone()
+    # sampleDepthsRegular = sampleDepths.clone()
 
     if (randSamples):
         sampleDepths = sampleDepths + ((far - near) / sampleCount) * t.rand(sampleDepths.shape) # move each depth forward to by a random distance within its bin
     samplePoints = rayOrigins.unsqueeze(-2) + sampleDepths[..., :-1].unsqueeze(-1) * rayDirs.unsqueeze(-2)
 
-    samplePointsRegular = rayOrigins.unsqueeze(-2) + sampleDepthsRegular.unsqueeze(-1) * rayDirs.unsqueeze(-2)
+    # samplePointsRegular = rayOrigins.unsqueeze(-2) + sampleDepthsRegular.unsqueeze(-1) * rayDirs.unsqueeze(-2)
 
     # test sample point generation
-    if (True):
+    if (False):
         plotPoints(samplePointsRegular)#, points2 = samplePointsRegular)#, ellipsoidDensity(samplePoints).clamp(0.05, 1))
 
 
@@ -128,7 +128,7 @@ focal = data["focal"]
 
 # verify that all poses are looking in the same direction
 # this is necessary since I haven't calibrated focal length which will be needed for freeform camera poses 
-if (True):
+if (False):
     c2ws = poses[:30] #t.stack((poses[3], poses[6]))
     uvs = t.zeros(c2ws.shape[0], 2)
     rayOrigins, rayDirs = getRays(uvs, 2, c2ws)
@@ -145,8 +145,6 @@ if (True):
 # showImage(image)
 
 
-
-exit()
 
 
 imageCount = images.shape[0]

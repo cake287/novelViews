@@ -3,13 +3,15 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 import torchvision.io as io
 from torchvision.utils import save_image
+import torch.optim.lr_scheduler as lr
 import matplotlib.pyplot as plt
 import numpy as np
 import math
 import os
 
 # input and output paths. do not include file extension on output path
-images = [(R"melon.jpg", R"output\melon"), (R"monkey.png", R"output\monkey")]
+# images = [(R"melon.jpg", R"output\melon"), (R"monkey.png", R"output\monkey")]
+images = [(R"monkey.png", R"output\monkey")]
 
 def DataFromPath(path):
     image = io.read_image(path, io.ImageReadMode.RGB)
@@ -169,14 +171,18 @@ def save_pred_image(model, res, x_train, path, name):
 
 for (inputPath, outputPath) in images:
     (train_dataloader, x_train, res) = DataFromPath(inputPath)
-    for model in [GaussEncNetwork().to(device), PosEncNetwork().to(device), NoEncNetwork().to(device)]:
+    for model in [NoEncNetwork().to(device), PosEncNetwork().to(device)]:
         loss_fn = nn.MSELoss()
-        optimizer = torch.optim.SGD(model.parameters(), lr = 1e-3, momentum=0.9)
+        optimizer = torch.optim.SGD(model.parameters(), lr = 0.01, momentum=0.9)
+        scheduler = lr.StepLR(optimizer, step_size=2000, gamma=0.1)
 
-        epochs = 20
+        epochs = 25000
         for t in range(epochs):
             if t % 10 == 9:
                 print(f"Epoch {t}")
+                print(f"Learning rate {scheduler.get_lr()}")
                 save_pred_image(model, res, x_train, f"{outputPath}/{model.name}/", f"{t // 1000}k.png")
             train(train_dataloader, model, loss_fn, optimizer)
+            scheduler.step()
+
 
