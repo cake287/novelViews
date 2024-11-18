@@ -55,7 +55,6 @@ class NerfNet(nn.Module):
 
 
 
-
 def train(dataloader, model, optimiser, lossFn = nn.MSELoss()):
     size = len(dataloader.dataset)
     model.train()

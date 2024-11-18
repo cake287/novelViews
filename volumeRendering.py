@@ -121,6 +121,7 @@ def ellipsoidDensity(pos):
     return density.clamp(0, 1), col
 
 
+
 data = np.load(R"data\nerf\tiny_nerf_data.npz")
 poses = t.tensor(data["poses"])
 images = t.tensor(data["images"])

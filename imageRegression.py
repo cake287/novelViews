@@ -129,7 +129,6 @@ class PosEncNetwork(nn.Module):
         return logits
 
 
-
 def train(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     model.train()
