@@ -1,43 +1,43 @@
 import torch as t
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+# import matplotlib.pyplot as plt
+# from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from random import randint
 
-def showImage(img):
-    plt.axis('off')
-    plt.imshow(img)
-    plt.show(block = False)
-    plt.show()
-def plotPoints(points, opacities = None, points2 = None):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    for (coords, col) in ([(points, 'b')] + ([(points2, 'g')] if points2 != None else [])):
-        coords = coords.reshape(-1, 3)
-        xs = coords[:, 0].numpy()
-        ys = coords[:, 1].numpy()
-        zs = coords[:, 2].numpy()
+# def showImage(img):
+#     plt.axis('off')
+#     plt.imshow(img)
+#     plt.show(block = False)
+#     plt.show()
+# def plotPoints(points, opacities = None, points2 = None):
+#     fig = plt.figure()
+#     ax = fig.add_subplot(111, projection='3d')
+#     for (coords, col) in ([(points, 'b')] + ([(points2, 'g')] if points2 != None else [])):
+#         coords = coords.reshape(-1, 3)
+#         xs = coords[:, 0].numpy()
+#         ys = coords[:, 1].numpy()
+#         zs = coords[:, 2].numpy()
 
-        if opacities == None:
-            ax.scatter(xs, ys, zs, color=col, marker='o')
-        else:
-            opacities = opacities.reshape(-1)
-            # t.set_printoptions(profile="full")
-            # print(opacities)
-            colours = np.column_stack((np.tile([0.5, 0, 1], (len(xs), 1)), opacities))
-            ax.scatter(xs, ys, zs, c=colours, marker='o')
+#         if opacities == None:
+#             ax.scatter(xs, ys, zs, color=col, marker='o')
+#         else:
+#             opacities = opacities.reshape(-1)
+#             # t.set_printoptions(profile="full")
+#             # print(opacities)
+#             colours = np.column_stack((np.tile([0.5, 0, 1], (len(xs), 1)), opacities))
+#             ax.scatter(xs, ys, zs, c=colours, marker='o')
 
-    ax.scatter([0], [0], [0], color='r', marker='o')
+#     ax.scatter([0], [0], [0], color='r', marker='o')
     
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
+#     ax.set_xlabel('X')
+#     ax.set_ylabel('Y')
+#     ax.set_zlabel('Z')
 
-    plt.show()
+#     plt.show()
 
 
 
-def getRays(H, W, focal, c2w):
+def getRays(H, W, focal, c2w, device="cpu"):
     """
     Generate H*W rays for each camera matrix in c2w
 
@@ -45,6 +45,8 @@ def getRays(H, W, focal, c2w):
     """
     # generate uv coords (-1 to 1)
     xs, ys = t.meshgrid(t.linspace(-1, 1, W), t.linspace(-1, 1, H), indexing="xy")
+    xs = xs.to(device)
+    ys = ys.to(device)
 
     # expand xs and ys for each matrix in c2w (agnostic to c2w's shape, oh yeah. unreadable but sick)
     preDims = len(c2w.shape) - 2
@@ -93,18 +95,20 @@ if (False):
     points = t.cat([points.reshape(-1, 3), t.unsqueeze(c2w[:3, 3], 0)], dim=0)
     plotPoints(points)
 
-def renderRays(rayOrigins, rayDirs, sceneFunc, sampleCount=120, near=0, far=8, randSamples=True):
+def renderRays(rayOrigins, rayDirs, sceneFunc, sampleCount=120, near=0, far=8, randSamples=True, device="cpu"):
     """Renders the given batch of rays and returns their colours"""
 
     # choose sampling points for each ray. atm these are at regular intervals - TODO change to random
     # there are (n+1) sample depths so that the nth sample has an interval distance for the integration approximation. this (n+1)th depth is not actually sampled.
     sampleDepths = t.linspace(near, far, sampleCount + 1)
     sampleDepths = sampleDepths.expand(rayOrigins.shape[:-1] + sampleDepths.shape)
+    sampleDepths = sampleDepths.to(device)
     # sampleDepthsRegular = sampleDepths.clone()
 
-    if (randSamples):
-        sampleDepths = sampleDepths + ((far - near) / sampleCount) * t.rand(sampleDepths.shape) # move each depth forward to by a random distance within its bin
+    # if (randSamples):
+    sampleDepths = sampleDepths + ((far - near) / sampleCount) * t.rand(sampleDepths.shape).to(device) # move each depth forward to by a random distance within its bin
     samplePoints = rayOrigins.unsqueeze(-2) + sampleDepths[..., :-1].unsqueeze(-1) * rayDirs.unsqueeze(-2)
+    samplePoints = samplePoints.to(device)
 
     # samplePointsRegular = rayOrigins.unsqueeze(-2) + sampleDepthsRegular.unsqueeze(-1) * rayDirs.unsqueeze(-2)
 
@@ -123,18 +127,20 @@ def renderRays(rayOrigins, rayDirs, sceneFunc, sampleCount=120, near=0, far=8, r
     sceneColours = sceneSourceColours * (1 - t.exp(-sceneDensities*sampleDiffs)).unsqueeze(-1)
 
     pixelColours = t.sum(sceneColours * accumulatedTransmittances.unsqueeze(-1), dim=-2)
-    return pixelColours
+    return pixelColours.to(device)
 
 
-def renderScene(sceneFunc, W, H, focal, c2w, sampleCount=120, near=0, far=8):
+def renderScene(sceneFunc, W, H, focal, c2w, sampleCount=120, near=0, far=8, device="cpu"):
     """Renders the given scene function as a W*H image"""
     # xs, ys = t.meshgrid(t.linspace(-1, 1, W), t.linspace(-1, 1, H), indexing="xy") # uv coordinates
     # c2ws = c2w.unsqueeze(0).unsqueeze(0).expand(H, W, c2w.shape[0], c2w.shape[1])
 
     # rayOrigins, rayDirs = getRays(t.stack((xs, ys), dim=-1), focal, c2ws)
 
-    rayOrigins, rayDirs = getRays(H, W, focal, c2w)
-    return renderRays(rayOrigins, rayDirs, sceneFunc, sampleCount, near, far, True)
+    rayOrigins, rayDirs = getRays(H, W, focal, c2w, device)
+    rayOrigins = rayOrigins.to(device) # this is totally not necessary. sort yo stuff pytorch. maybe i'm doing something wrong
+    rayDirs = rayDirs.to(device)
+    return renderRays(rayOrigins, rayDirs, sceneFunc, sampleCount, near, far, True, device=device)
 
 
 def ellipsoidDensity(pos):
@@ -195,4 +201,4 @@ def test():
         else:
             finalImg = t.cat((finalImg, adjacentImages))
 
-    showImage(finalImg)
+    # showImage(finalImg)

@@ -2,15 +2,15 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import volumeRendering
-from volumeRendering import showImage
+# from volumeRendering import showImage
 
-path = R"data\nerf\tiny_nerf_data.npz"
+path = R"data/nerf/tiny_nerf_data.npz"
 
 class NerfDataset(Dataset):
-    def __init__(self):
+    def __init__(self, device):
         data = np.load(path)
-        self.images = torch.tensor(data["images"])
-        self.poses = torch.tensor(data["poses"])
+        self.images = torch.tensor(data["images"]).to(device)
+        self.poses = torch.tensor(data["poses"]).to(device)
         self.focal = data["focal"]
         
         self.imageCount = self.images.shape[0]
@@ -21,8 +21,8 @@ class NerfDataset(Dataset):
         # expandedPoses = self.poses.view(self.imageCount, 1, 1, 4, 4).expand(-1, self.H, self.W, -1, -1) # repeat camera matrix for each uv coord in an image
         # rayOrigins, rayDirs = volumeRendering.getRays(uvs, 3, expandedPoses)
 
-        rayOrigins, rayDirs = volumeRendering.getRays(self.H, self.W, 3, self.poses)
-        self.rays = torch.cat((rayOrigins, rayDirs), -1)
+        rayOrigins, rayDirs = volumeRendering.getRays(self.H, self.W, 3, self.poses, device)
+        self.rays = torch.cat((rayOrigins, rayDirs), -1).to(device)
 
     def __len__(self):
         return self.imageCount * self.H * self.W
@@ -53,4 +53,4 @@ def testUVs():
             
             testImg[y, x] = col
 
-    showImage(testImg)
+    # showImage(testImg)

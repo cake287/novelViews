@@ -4,10 +4,10 @@ from torch.utils.data import DataLoader, TensorDataset
 import torchvision.io as io
 from torchvision.utils import save_image
 import torch.optim.lr_scheduler as lr
-import matplotlib.pyplot as plt
 import numpy as np
 import math
 import os
+from time import time
 
 from volumeRendering import *
 from nerfData import NerfDataset
@@ -18,42 +18,57 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device {device}")
 
 def posEncode(x, encScale):
-    pows = torch.pow(2, torch.arange(0, encScale))
+    pows = torch.pow(2, torch.arange(0, encScale)).to(device)
     products = x.unsqueeze(-1) * pows
-    products = products.view(*(x.shape[:-1]), 3*encScale)
+    products = products.view(*(x.shape[:-1]), x.shape[-1]*encScale)
 
     sins = torch.sin(2*math.pi * products)
     coss = torch.cos(2*math.pi * products)
-    encX = torch.stack((coss, sins), dim=-1).reshape(*(x.shape[:-1]), 6*encScale) # interleave sins and coss
+    encX = torch.stack((coss, sins), dim=-1).reshape(*(x.shape[:-1]), 2*x.shape[-1]*encScale).to(device) # interleave sins and coss
     return encX
 
 class NerfNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.depth = 5
+        self.depths = (3, 5) # position input is fed into the network again between these two groups of layers
         self.encScale = 6
 
-        layers = []
-        layers.append(nn.Linear(6*self.encScale, 256))
-        for _ in range(self.depth):
-            layers.append(nn.ReLU())
-            layers.append(nn.Linear(256, 256))
+        inputSizes = (6*self.encScale, 6*self.encScale + 256)
 
-        self.fcLayers = nn.Sequential(*layers)
+        self.fcLayers = nn.ModuleList()
+        for depth, inputSize in zip(self.depths, inputSizes):
+            layers = [nn.Linear(inputSize, 256), nn.ReLU()]
+            for _ in range(depth - 1):
+                layers.append(nn.Linear(256, 256))
+                layers.append(nn.ReLU())
+
+            self.fcLayers.append(nn.Sequential(*layers))
     
-        self.densityLayer = nn.Linear(256, 1)
-        self.colourLayer = nn.Linear(256, 3)
+
+        self.densityModule = nn.Sequential(
+            nn.Linear(256, 1),
+            nn.ReLU()
+        )
+
+        self.colourModule = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 3),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
         # we run the training loop on a batch of rays. the renderer turns this into a 2d batch, with the second dimension being the samples along each ray
         # flatten these into one dimension before passing to the model
         xShape = x.shape
         x = x.flatten(end_dim=-2) 
-        x = posEncode(x, self.encScale)
-        intermediateOutput = self.fcLayers(x)
+        encX = posEncode(x, self.encScale)
 
-        density = nn.functional.relu(self.densityLayer(intermediateOutput))
-        colour = nn.functional.sigmoid(self.colourLayer(intermediateOutput))
+        logits = self.fcLayers[0](encX)
+        logits = self.fcLayers[1](torch.cat((logits, encX), dim=-1))
+
+        density = self.densityModule(logits)
+        colour = self.colourModule(logits)
 
         # unflatten
         density = density.view(*(xShape[:-1]))
@@ -69,7 +84,8 @@ def train(dataloader, model, optimiser, lossFn = nn.MSELoss()):
         rays, trueCols = rays.to(device), trueCols.to(device)
 
         rayOrigins, rayDirs = rays.split(3, dim=-1)
-        predCols = renderRays(rayOrigins, rayDirs, model)
+        rayOrigins, rayDirs = rayOrigins.to(device), rayDirs.to(device)
+        predCols = renderRays(rayOrigins, rayDirs, model, device=device)
 
         loss = lossFn(predCols, trueCols) 
 
@@ -77,17 +93,17 @@ def train(dataloader, model, optimiser, lossFn = nn.MSELoss()):
         optimiser.step()
         optimiser.zero_grad()
 
-        if batch % 200 == 0:
+        if batch % 2000 == 0:
             size = len(dataloader.dataset)
             loss = loss.item()
             current = (batch + 1) * len(rays)
-            print(f"loss: {loss:>5f} [{current:>5d}/{size:>5d}]")
+            print(f"loss: {loss:>.3f} [{current:>5d}/{size:>5d}]")
 
 
-def savePredImg(model, pose, path, name):
+def savePredImg(model, pose, focal, path, name):
     model.eval()
     with torch.no_grad():
-        img = renderScene(model, 100, 100, 3, pose)
+        img = renderScene(model, 100, 100, focal, pose, device=device)
         
         if not os.path.exists(path):
             os.makedirs(path)
@@ -103,20 +119,32 @@ def saveModel(model, path, name):
         print("Failed to save model")
 
 
-outpath = "novelViews/nerf/output/"
-dataset = NerfDataset()
-dataloader = DataLoader(dataset, 100, shuffle=True)
+def run():
+    outpath = "output/"
+    dataset = NerfDataset(device)
+    dataloader = DataLoader(dataset, 10000, shuffle=True)
 
-model = NerfNet().to(device)
+    model = NerfNet().to(device)
+    model.load_state_dict(torch.load(outpath + "model/model.pth", weights_only=True))
 
-optimiser = torch.optim.SGD(model.parameters(), lr = 0.01, momentum=0.9)
-scheduler = lr.StepLR(optimiser, step_size=10, gamma=0.1)
+    # optimiser = torch.optim.SGD(model.parameters(), lr = 5e-3, momentum=0.9) # 5e-4 is the original implementation's initial learning rate
+    optimiser = torch.optim.Adam(model.parameters())
+    scheduler = lr.StepLR(optimiser, step_size=500, gamma=0.5)
 
-epochs = 20
-for t in range(epochs):
-    print(f"Epoch {t}")
-    train(dataloader, model, optimiser)
-    scheduler.step()
-    savePredImg(model, dataset.poses[1], outpath + "img/", f"{t}.png")
-    saveModel(model, outpath + "model/", "model.pth")
-    
+    epochs = 10000
+    t = time()
+    for epoch in range(epochs):
+        print(f"Time {(time() - t):.2f}s")
+        print(f"Memory use: {(torch.cuda.max_memory_allocated(device=device) // 1e6):.0f}MiB")
+        t = time()
+
+        print(f"Epoch {epoch}")
+        train(dataloader, model, optimiser)
+        scheduler.step()
+        
+        if epoch % 10 == 0:
+            savePredImg(model, dataset.poses[25], dataset.focal, outpath + "img/", f"{(epoch//10):05}.png")
+            saveModel(model, outpath + "model/", "model.pth")
+
+
+run()
