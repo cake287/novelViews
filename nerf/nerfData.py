@@ -11,7 +11,7 @@ class NerfDataset(Dataset):
         data = np.load(path)
         self.images = torch.tensor(data["images"]).to(device)
         self.poses = torch.tensor(data["poses"]).to(device)
-        self.focal = data["focal"]
+        self.focal = 3 #data["focal"]
         
         self.imageCount = self.images.shape[0]
         self.H, self.W = self.images.shape[1:3]
